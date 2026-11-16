@@ -1,6 +1,6 @@
 # sync4j-config
 
-Reads the description of [sync4j](https://github.com/fathzer/sync4j) synchronizations from a JSON configuration: *which* folders to synchronize, on *which* providers, with *which* exclusions.
+Reads the description of [sync4j](https://github.com/fathzer/sync4j) synchronizations from a JSON configuration: *which* folders to synchronize, on *which* providers, with *which* filters.
 
 It is used by programs that are driven by a configuration file, like [sync4j-web](https://github.com/sync4j/sync4j-web), and can be used by others (a command line, for instance).
 
@@ -17,16 +17,17 @@ It is used by programs that are driven by a configuration file, like [sync4j-web
       "id": "photos",
       "label": "My photos",
       "source": { "provider": "pCloud", "path": "/Photos", "config": { "zone": "us", "token": "${PCLOUD_TOKEN}" } },
-      "destination": { "provider": "local", "path": "${LOCAL_PATH_PREFIX}/photos" }
+      "destination": { "provider": "local", "path": "${LOCAL_PATH_PREFIX}/photos" },
+      "filters": ["- *.xmp"]
     }
   ],
-  "excludePatterns": ["*.tmp", "*.db*"]
+  "filters": ["+ /important/**.db", "- *.tmp", "- *.db*"]
 }
 ```
 
 - A *library* is a source folder that is synchronized with a destination folder. `id` can contain alphanumeric characters, `-` and `_`, and is unique. `label` is optional (the id by default).
 - `provider` is the type of the provider of a location (see below). `path` is the path of the root of the location, and `config` is the configuration of the provider (the content depends on the provider).
-- `excludePatterns` are glob patterns of the entries that are not synchronized.
+- `filters` are the rules that tell which entries are synchronized: `- pattern` excludes the entries that match the glob pattern, `+ pattern` includes them. The first rule that matches an entry decides, an entry that no rule matches is synchronized (so an exception goes before the general rule: `["+ /important/**.db", "- *.db*"]`). A pattern that starts with `/` is anchored to the root of the library, any other one can match at any level (`*.tmp` matches the `.tmp` files of all the folders). The syntax is described by `FilterRules` in sync4j. The rules of the root apply to all the libraries, the optional ones of a library are tried **before** them (so a library can override a global rule): `SynchronizationConfig.filters(library)` returns the rules to apply. An invalid rule, or the old `excludePatterns` attribute, is an error.
 - `${VARIABLE}` is replaced by the value of the environment variable in `path` and in all the text values of `config`. It is an error if the variable is not defined.
 
 ```java

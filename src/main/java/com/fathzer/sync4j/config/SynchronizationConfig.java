@@ -10,6 +10,7 @@ import java.util.Set;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fathzer.sync4j.FileProvider;
 import com.fathzer.sync4j.FileProviderFactory;
+import com.fathzer.sync4j.util.FilterRules;
 import com.fathzer.sync4j.util.IOLambda.IOFunction;
 
 /**
@@ -24,10 +25,11 @@ import com.fathzer.sync4j.util.IOLambda.IOFunction;
  *       "id": "photos",
  *       "label": "My photos",
  *       "source": { "provider": "pCloud", "path": "/Photos", "config": { "zone": "us", "token": "${PCLOUD_TOKEN}" } },
- *       "destination": { "provider": "local", "path": "${LOCAL_PATH_PREFIX}/photos" }
+ *       "destination": { "provider": "local", "path": "${LOCAL_PATH_PREFIX}/photos" },
+ *       "filters": ["- *.xmp"]
  *     }
  *   ],
- *   "excludePatterns": ["*.tmp"]
+ *   "filters": ["- *.tmp"]
  * }
  * </pre>
  * <p>
@@ -36,12 +38,12 @@ import com.fathzer.sync4j.util.IOLambda.IOFunction;
  * The <code>path</code> is optional only for the providers that have no root path (see {@link FileProviderFactory#isRootPathRequired()}).
  * </p>
  * @param libraries the libraries
- * @param excludePatterns glob patterns of the entries that are not synchronized
+ * @param filters the filter rules (see {@link FilterRules}) that apply to all the libraries. A library can have its own ones, that are tried first (see {@link Library#filters()} and {@link #filters(Library)})
  */
-public record SynchronizationConfig(List<Library> libraries, List<String> excludePatterns) {
+public record SynchronizationConfig(List<Library> libraries, List<String> filters) {
     public SynchronizationConfig {
         Objects.requireNonNull(libraries);
-        Objects.requireNonNull(excludePatterns);
+        Objects.requireNonNull(filters);
     }
 
     /**
@@ -65,16 +67,39 @@ public record SynchronizationConfig(List<Library> libraries, List<String> exclud
             }
             libraries.add(library);
         }
-        final List<String> excludePatterns = new ArrayList<>();
-        node.path("excludePatterns").forEach(n -> excludePatterns.add(n.asText()));
-        return new SynchronizationConfig(libraries, excludePatterns);
+        return new SynchronizationConfig(libraries, rules(node, "the synchronization"));
+    }
+
+    private static List<String> rules(JsonNode node, String wording) throws IOException {
+        if (node.has("excludePatterns")) {
+            throw new IOException("excludePatterns of " + wording + " is not supported anymore, it was replaced by filters (rules like \"- *.tmp\", see the documentation)");
+        }
+        final List<String> rules = new ArrayList<>();
+        node.path("filters").forEach(n -> rules.add(n.asText()));
+        try {
+            FilterRules.of(rules); // Fails fast if a rule is invalid
+        } catch (IllegalArgumentException e) {
+            throw new IOException("Invalid filters of " + wording + ": " + e.getMessage(), e);
+        }
+        return rules;
+    }
+
+    /**
+     * Gets the filter rules to apply to a library.
+     * @param library a library of this configuration
+     * @return The rules of the library followed by the global ones (the first rule that matches an entry decides, so a library can override the global rules)
+     */
+    public List<String> filters(Library library) {
+        final List<String> all = new ArrayList<>(library.filters());
+        all.addAll(filters);
+        return all;
     }
 
     private static Library parseLibrary(JsonNode node, ProviderRegistry providers) throws IOException {
         final String id = text(node, "id", "library id");
         final String label = node.has("label") ? node.get("label").asText() : id;
         try {
-            return new Library(id, label, parseLocation(node.get("source"), providers, "source of library " + id), parseLocation(node.get("destination"), providers, "destination of library " + id));
+            return new Library(id, label, parseLocation(node.get("source"), providers, "source of library " + id), parseLocation(node.get("destination"), providers, "destination of library " + id), rules(node, "library " + id));
         } catch (IllegalArgumentException e) {
             throw new IOException("Invalid library " + id + ": " + e.getMessage(), e);
         }

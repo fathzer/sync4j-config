@@ -36,9 +36,9 @@ class SynchronizationConfigTest {
     @Test
     void testParse() throws IOException {
         final SynchronizationConfig config = parse("{\"libraries\":[{\"id\":\"lib-1\",\"label\":\"Library 1\"," +
-                "\"source\":{\"provider\":\"local\",\"path\":\"/tmp\"},\"destination\":{\"provider\":\"local\",\"path\":\"/dst\"}}],\"excludePatterns\":[\"*.tmp\",\"*.db\"]}");
+                "\"source\":{\"provider\":\"local\",\"path\":\"/tmp\"},\"destination\":{\"provider\":\"local\",\"path\":\"/dst\"}}],\"filters\":[\"- *.tmp\",\"- *.db\"]}");
 
-        assertEquals(List.of("*.tmp", "*.db"), config.excludePatterns());
+        assertEquals(List.of("- *.tmp", "- *.db"), config.filters());
         assertEquals(1, config.libraries().size());
         final Library library = config.libraries().get(0);
         assertEquals("lib-1", library.id());
@@ -52,10 +52,40 @@ class SynchronizationConfigTest {
     }
 
     @Test
+    void testLibraryFilters() throws IOException {
+        final String loc = "\"source\":{\"provider\":\"local\",\"path\":\"/s\"},\"destination\":{\"provider\":\"local\",\"path\":\"/d\"}";
+        final SynchronizationConfig config = parse("{\"filters\":[\"- *.tmp\",\"- *.trucs\"],\"libraries\":[" +
+                "{\"id\":\"a\"," + loc + ",\"filters\":[\"+ *.trucs\",\"- *.db\"]}," +
+                "{\"id\":\"b\"," + loc + "}]}");
+        final Library a = config.libraries().get(0);
+        final Library b = config.libraries().get(1);
+        assertEquals(List.of("+ *.trucs", "- *.db"), a.filters());
+        assertTrue(b.filters().isEmpty());
+        // The rules of a library are tried before the global ones
+        assertEquals(List.of("+ *.trucs", "- *.db", "- *.tmp", "- *.trucs"), config.filters(a));
+        assertEquals(List.of("- *.tmp", "- *.trucs"), config.filters(b));
+        // The global ones are not modified
+        assertEquals(List.of("- *.tmp", "- *.trucs"), config.filters());
+    }
+
+    @Test
+    void testInvalidFilters() {
+        final String loc = "\"source\":{\"provider\":\"local\",\"path\":\"/s\"},\"destination\":{\"provider\":\"local\",\"path\":\"/d\"}";
+        assertThrows(IOException.class, () -> parse("{\"filters\":[\"- *.{tmp\"]}"), "Invalid global pattern");
+        assertThrows(IOException.class, () -> parse("{\"filters\":[\"*.tmp\"]}"), "A rule needs a sign");
+        assertThrows(IOException.class, () -> parse("{\"libraries\":[{\"id\":\"a\"," + loc + ",\"filters\":[\"-\"]}]}"), "Invalid rule of a library");
+        assertDoesNotThrow(() -> parse("{\"filters\":[\"+ /keep/**\",\"- *.tmp\"]}"));
+        // The old name is refused, not ignored
+        final IOException e = assertThrows(IOException.class, () -> parse("{\"excludePatterns\":[\"*.tmp\"]}"));
+        assertTrue(e.getMessage().contains("filters"), e.getMessage());
+        assertThrows(IOException.class, () -> parse("{\"libraries\":[{\"id\":\"a\"," + loc + ",\"excludePatterns\":[\"*.tmp\"]}]}"));
+    }
+
+    @Test
     void testDefaults() throws IOException {
         final SynchronizationConfig config = parse(libraries(library("a", "/src", "/dst")));
 
-        assertTrue(config.excludePatterns().isEmpty());
+        assertTrue(config.filters().isEmpty());
         // The label is the id by default
         assertEquals("a", config.libraries().get(0).label());
         // No library is valid
